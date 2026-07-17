@@ -3,7 +3,7 @@ import pandas as pd
 from PIL import Image
 import pytesseract
 from rapidfuzz import process, fuzz
-
+import numpy as np
 # Cấu hình giao diện Streamlit
 st.set_page_config(page_title="Trợ Lý Tìm Đáp Án", layout="centered")
 
