@@ -47,13 +47,14 @@ if excel_file:
         image = Image.open(image_file)
         st.image(image, caption="Ảnh của bạn", width=300)
         
-        with st.spinner("Đang quét chữ..."):
+       with st.spinner("Đang quét chữ..."):
             try:
                 processed_img = preprocess_image(image)
                 # Dùng Tesseract quét tiếng Việt
                 scanned_text = pytesseract.image_to_string(processed_img, lang='vie') 
             except Exception as e:
-                st.error("Lỗi hệ thống OCR. Đảm bảo đã cài file packages.txt trên server.")
+                st.error(f"Lỗi chi tiết từ Tesseract: {e}") # In ra lỗi thật để bắt bệnh
+                st.info("Gợi ý: Nếu lỗi là 'TesseractNotFoundError', hãy làm lại Bước 2 (Reboot app). Nếu lỗi là 'failed to load language vie', tức là dòng thứ 2 trong file packages.txt chưa được cài đặt đúng.")
                 st.stop()
 
         with st.expander("Nội dung quét được (Bấm để xem)"):
