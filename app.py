@@ -1,133 +1,91 @@
 import streamlit as st
 import pandas as pd
 from PIL import Image
-import easyocr
+import pytesseract
+from rapidfuzz import process, fuzz
 import numpy as np
-import io
 
-# =====================================================================
-# 1. BẢO MẬT: BẮT BUỘC ĐĂNG NHẬP BẰNG KEY / PASSWORD
-# (Tránh bị share link xài chùa)
-# =====================================================================
-VALID_KEYS = ["ADMIN123", "VIP_USER_2026", "STUDY_HARD_99"] # Danh sách Key của bạn
+# Cấu hình giao diện Streamlit
+st.set_page_config(page_title="Trợ Lý Tìm Đáp Án", layout="centered")
 
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
+st.title("🔍 Trợ Lý Tìm Đáp Án Qua Ảnh")
 
-if not st.session_state["authenticated"]:
-    st.title("🔐 Xác Thực Truy Cập")
-    user_key = st.text_input("Nhập mã kích hoạt của bạn:", type="password")
-    if st.button("Kích hoạt"):
-        if user_key in VALID_KEYS:
-            st.session_state["authenticated"] = True
-            st.success("Kích hoạt thành công! Vui lòng bấm F5 hoặc đợi 1s...")
-            st.rerun()
-        else:
-            st.error("Mã kích hoạt không đúng hoặc đã hết hạn!")
-    st.stop() # Dừng toàn bộ app nếu chưa nhập đúng Key
-
-# =====================================================================
-# 2. CODE CORE CHẠY APP (CHỈ CHẠY KHI ĐÃ NHẬP ĐÚNG KEY)
-# =====================================================================
-st.title("🔍 Trợ Lý Tìm Đáp Án Qua Ảnh (Bản Bảo Mật)")
-
-# Dùng cache_data để KHÔNG load lại file Excel mỗi khi người dùng up ảnh
+# 1. Hàm nạp dữ liệu (Load 1 lần để tăng tốc)
 @st.cache_data
-def load_database(uploaded_file):
-    if uploaded_file is not None:
-        return pd.read_excel(uploaded_file)
-    return None
+def load_data(file):
+    return pd.read_excel(file)
 
-# Dùng cache_resource để giữ bộ quét chữ OCR luôn trong bộ nhớ, không khởi động lại
-@st.cache_resource
-def load_ocr_model():
-    return easyocr.Reader(['vi', 'en']) # Hỗ trợ Tiếng Việt và Tiếng Anh
+# 2. Xử lý ảnh trước khi quét để tăng độ chính xác OCR
+def preprocess_image(image):
+    # Chuyển ảnh màu sang trắng đen (Grayscale)
+    img_gray = image.convert('L')
+    return img_gray
 
-reader = load_ocr_model()
+# GIAO DIỆN CHÍNH
+st.markdown("### Bước 1: Tải file dữ liệu (.xlsx)")
+excel_file = st.file_uploader("Chọn file Excel (Cột 1: Câu hỏi, Cột 2: Đáp án)", type=["xlsx"])
 
-# BƯỚC 1: Nạp ngân hàng câu hỏi
-st.subheader("Bước 1: Nạp dữ liệu câu hỏi (.xlsx)")
-excel_file = st.file_uploader("Tải file Excel câu hỏi lên", type=["xlsx"])
-df_questions = load_database(excel_file)
-
-if df_questions is not None:
-    st.success("✅ Đã nạp dữ liệu câu hỏi thành công!")
+if excel_file:
+    df = load_data(excel_file)
+    st.success(f"✅ Đã nạp {len(df)} câu hỏi.")
     
-    # BƯỚC 2: Tải ảnh câu hỏi lên
-    st.subheader("Bước 2: Chụp hoặc tải ảnh câu hỏi")
-    image_file = st.file_uploader("Upload hoặc chụp ảnh câu hỏi", type=["jpg", "jpeg", "png"])
+    st.markdown("### Bước 2: Tải ảnh câu hỏi")
+    image_file = st.file_uploader("Chọn ảnh cần quét", type=["png", "jpg", "jpeg"])
     
-    if image_file is not None:
-        # TỰ ĐỘNG NÉN ẢNH: Chuyển đổi dung lượng lớn (5MB) về ảnh siêu nhẹ (dưới 300KB)
+    if image_file:
+        # Hiển thị ảnh đang quét
         image = Image.open(image_file)
+        st.image(image, caption="Ảnh của bạn", width=300)
         
-        # Resize ảnh về kích thước tối đa 1024px để quét chữ nhanh hơn mà không giảm độ chính xác
-        image.thumbnail((1024, 1024))
-        
-        # Nén ảnh dạng JPEG với chất lượng 80% (giảm tối đa dung lượng)
-        buffer = io.BytesIO()
-        image.convert("RGB").save(buffer, format="JPEG", quality=80)
-        compressed_image_bytes = buffer.getvalue()
-        
-        # Đọc lại ảnh đã nén để đưa vào bộ OCR
-        final_image = Image.open(io.BytesIO(compressed_image_bytes))
-        image_np = np.array(final_image)
-        
-        st.info("⚡ Đang nén ảnh và trích xuất chữ viết...")
-        
-        # Quét chữ
-        with st.spinner("Đang đọc chữ từ ảnh..."):
-            results = reader.readtext(image_np, detail=0)
-            scanned_text = " ".join(results)
-        
-        st.text_area("Nội dung chữ quét được từ ảnh:", scanned_text, height=100)
-        
-        # Thuật toán tìm kiếm thông minh trong Excel (bạn có thể thay bằng fuzzy matching)
-        # Thuật toán tìm kiếm thông minh trong Excel
-        # THUẬT TOÁN TÌM KIẾM MỚI: FUZZY MATCHING BẰNG RAPIDFUZZ
-        # THUẬT TOÁN TÌM KIẾM GỐC: FUZZY MATCHING (ĐỘ CHÍNH XÁC >= 80.1%)
-        if scanned_text.strip():
-            st.subheader("🎯 Kết quả tra cứu:")
-            
+        with st.spinner("Đang quét chữ..."):
             try:
-                from rapidfuzz import process, fuzz
-            except ImportError:
-                st.error("Thiếu thư viện rapidfuzz. Hãy thêm 'rapidfuzz' vào requirements.txt")
+                # Tiền xử lý và quét chữ
+                processed_img = preprocess_image(image)
+                # lang='vie' bắt buộc Tesseract dùng bộ nhận diện Tiếng Việt
+                scanned_text = pytesseract.image_to_string(processed_img, lang='vie') 
+            except Exception as e:
+                st.error("Lỗi hệ thống OCR. Đảm bảo đã cài đặt Tesseract trên server.")
                 st.stop()
-                
-            # Chuẩn bị dữ liệu
-            df_questions_str = df_questions.fillna("").astype(str)
-            df_questions_str['combined_text'] = df_questions_str.apply(lambda row: ' '.join(row.values), axis=1)
-            choices = df_questions_str['combined_text'].tolist()
+
+        # Hiển thị chữ quét được (để bạn kiểm tra xem nó quét đúng/sai)
+        with st.expander("Nội dung quét được (Bấm để xem)"):
+            st.write(scanned_text)
+
+        # 3. THUẬT TOÁN TÌM KIẾM ĐÁP ÁN (Ngưỡng >= 80)
+        if scanned_text.strip():
+            st.markdown("### 🎯 KẾT QUẢ:")
             
-            # Quét và so khớp (Giới hạn trả về tối đa 3 kết quả tốt nhất để đỡ rối mắt)
-            results_fuzz = process.extract(scanned_text, choices, scorer=fuzz.token_set_ratio, limit=3)
+            # Gộp tất cả các cột thành 1 chuỗi để tìm kiếm
+            df_str = df.fillna("").astype(str)
+            df_str['Tim_Kiem'] = df_str.apply(lambda row: ' '.join(row.values), axis=1)
+            danh_sach_cau_hoi = df_str['Tim_Kiem'].tolist()
             
-            # BỘ LỌC KHẮT KHE: Chỉ lấy những kết quả đạt ngưỡng từ 80.1% trở lên
-            valid_results = [res for res in results_fuzz if res[1] >= 80.1]
+            # Quét tìm câu giống nhất bằng Rapidfuzz
+            ket_qua_tim_kiem = process.extract(
+                scanned_text, 
+                danh_sach_cau_hoi, 
+                scorer=fuzz.token_set_ratio, 
+                limit=3
+            )
             
-            if not valid_results:
-                 st.warning("⚠️ Không tìm thấy đáp án nào khớp trên 80.1%. Bạn thử chụp lại rõ hơn một chút nhé!")
+            # Lọc kết quả: Lấy những câu có độ khớp >= 80%
+            ket_qua_chinh_xac = [kq for kq in ket_qua_tim_kiem if kq[1] >= 80]
+            
+            if not ket_qua_chinh_xac:
+                st.warning("⚠️ Không tìm thấy đáp án chính xác (Độ khớp < 80%). Bạn hãy chụp rõ hơn.")
             else:
-                st.success(f"🔍 Tìm thấy {len(valid_results)} kết quả chính xác cao!")
-                
-                # In ra kết quả
-                for best_match, score, index in valid_results:
-                    row_data = df_questions.iloc[index]
+                # In ra các đáp án tìm được
+                for text_match, score, index in ket_qua_chinh_xac:
+                    hang_du_lieu = df.iloc[index]
                     
                     st.markdown("---")
-                    st.markdown(f"*(Độ khớp: {score:.1f}%)*") 
                     
-                    if len(df_questions.columns) >= 2:
-                        col_q = df_questions.columns[0]
-                        col_a = df_questions.columns[1]
+                    # Giả định cột 0 là Câu hỏi, cột 1 là Đáp án
+                    if len(df.columns) >= 2:
+                        cot_cau_hoi = df.columns[0]
+                        cot_dap_an = df.columns[1]
                         
-                        st.markdown(f"**Câu hỏi:** {row_data[col_q]}")
-                        st.info(f"👉 **Đáp án:** {row_data[col_a]}")
-                        
-                        # In các cột phụ nếu có (lời giải, môn học...)
-                        for extra_col in df_questions.columns[2:]:
-                             if pd.notna(row_data[extra_col]) and str(row_data[extra_col]).strip() != "":
-                                st.write(f"*{extra_col}:* {row_data[extra_col]}")
+                        st.markdown(f"**❓ Câu hỏi:** {hang_du_lieu[cot_cau_hoi]}")
+                        st.success(f"**💡 Đáp án:** {hang_du_lieu[cot_dap_an]}")
                     else:
-                        st.markdown(f"**Nội dung tìm thấy:** {row_data[df_questions.columns[0]]}")
+                        st.success(f"**Nội dung:** {hang_du_lieu[df.columns[0]]}")
