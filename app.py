@@ -85,44 +85,39 @@ if df_questions is not None:
         # Thuật toán tìm kiếm thông minh trong Excel (bạn có thể thay bằng fuzzy matching)
         # Thuật toán tìm kiếm thông minh trong Excel
         # THUẬT TOÁN TÌM KIẾM MỚI: FUZZY MATCHING BẰNG RAPIDFUZZ
+        # THUẬT TOÁN TÌM KIẾM GỐC: FUZZY MATCHING (ĐỘ CHÍNH XÁC >= 80.1%)
         if scanned_text.strip():
             st.subheader("🎯 Kết quả tra cứu:")
             
-            # Cần import thêm thư viện này (Bạn nhớ thêm rapidfuzz vào file requirements.txt nhé)
             try:
                 from rapidfuzz import process, fuzz
             except ImportError:
                 st.error("Thiếu thư viện rapidfuzz. Hãy thêm 'rapidfuzz' vào requirements.txt")
                 st.stop()
                 
-            # Tạo một list chứa toàn bộ nội dung của tất cả các cột để so sánh
-            # Ở đây ta ưu tiên ghép nối các cột lại để có chuỗi so sánh dài nhất
+            # Chuẩn bị dữ liệu
             df_questions_str = df_questions.fillna("").astype(str)
-            
-            # Tạo một cột tạm chứa toàn bộ text của mỗi hàng
             df_questions_str['combined_text'] = df_questions_str.apply(lambda row: ' '.join(row.values), axis=1)
             choices = df_questions_str['combined_text'].tolist()
             
-            # Sử dụng token_set_ratio của rapidfuzz để so khớp mờ. 
-            # Dù OCR ra chữ "Lảm isc uen dường dày bung", nó vẫn tìm được câu "Làm đứt cáp đường dây điện"
-            results_fuzz = process.extract(scanned_text, choices, scorer=fuzz.token_set_ratio, limit=5)
+            # Quét và so khớp (Giới hạn trả về tối đa 3 kết quả tốt nhất để đỡ rối mắt)
+            results_fuzz = process.extract(scanned_text, choices, scorer=fuzz.token_set_ratio, limit=3)
             
-            # Lọc ra những kết quả có độ chính xác trên 40% (Bạn có thể tăng giảm số 40 này)
-            valid_results = [res for res in results_fuzz if res[1] >= 40]
+            # BỘ LỌC KHẮT KHE: Chỉ lấy những kết quả đạt ngưỡng từ 80.1% trở lên
+            valid_results = [res for res in results_fuzz if res[1] >= 80.1]
             
             if not valid_results:
-                 st.warning("Không tìm thấy đáp án nào tương đồng. Vui lòng chụp rõ hơn!")
+                 st.warning("⚠️ Không tìm thấy đáp án nào khớp trên 80.1%. Bạn thử chụp lại rõ hơn một chút nhé!")
             else:
-                st.success(f"🔍 Tìm thấy {len(valid_results)} kết quả tương đồng nhất!")
+                st.success(f"🔍 Tìm thấy {len(valid_results)} kết quả chính xác cao!")
                 
+                # In ra kết quả
                 for best_match, score, index in valid_results:
-                    # Lấy ra đúng cái hàng (row) gốc trong file Excel dựa vào index
                     row_data = df_questions.iloc[index]
                     
                     st.markdown("---")
-                    st.markdown(f"*(Độ tin cậy: {score:.1f}%)*") # Hiển thị số % giống nhau
+                    st.markdown(f"*(Độ khớp: {score:.1f}%)*") 
                     
-                    # Hiển thị kết quả y như cũ
                     if len(df_questions.columns) >= 2:
                         col_q = df_questions.columns[0]
                         col_a = df_questions.columns[1]
@@ -130,8 +125,9 @@ if df_questions is not None:
                         st.markdown(f"**Câu hỏi:** {row_data[col_q]}")
                         st.info(f"👉 **Đáp án:** {row_data[col_a]}")
                         
+                        # In các cột phụ nếu có (lời giải, môn học...)
                         for extra_col in df_questions.columns[2:]:
-                             if pd.notna(row_data[extra_col]):
+                             if pd.notna(row_data[extra_col]) and str(row_data[extra_col]).strip() != "":
                                 st.write(f"*{extra_col}:* {row_data[extra_col]}")
                     else:
                         st.markdown(f"**Nội dung tìm thấy:** {row_data[df_questions.columns[0]]}")
