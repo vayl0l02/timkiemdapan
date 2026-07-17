@@ -1,74 +1,80 @@
 import streamlit as st
 import pandas as pd
-from PIL import Image
-import pytesseract
-from rapidfuzz import process, fuzz
+from PIL import Image, ImageOps
+import easyocr
 import numpy as np
-# Cấu hình giao diện Streamlit
-st.set_page_config(page_title="Trợ Lý Tìm Đáp Án", layout="centered")
+from rapidfuzz import process, fuzz
+import io
 
+# Cấu hình giao diện
+st.set_page_config(page_title="Trợ Lý Tìm Đáp Án", layout="centered")
 st.title("🔍 Trợ Lý Tìm Đáp Án Qua Ảnh")
 
-# 1. Hàm nạp dữ liệu (Load 1 lần để tăng tốc)
+# 1. Nạp bộ quét OCR (Load 1 lần, lưu vào bộ nhớ đệm)
+@st.cache_resource
+def load_ocr():
+    return easyocr.Reader(['vi']) # Chỉ nạp Tiếng Việt để chạy nhanh và nhẹ hơn
+
+reader = load_ocr()
+
+# 2. Nạp dữ liệu Excel (Load 1 lần)
 @st.cache_data
 def load_data(file):
     return pd.read_excel(file)
 
-# 2. Xử lý ảnh nâng cấp: CHUYỂN ẢNH THÀNH TRẮNG ĐEN TUYỆT ĐỐI (Binarization)
-# Giúp loại bỏ bóng đổ, vân nhiễu từ hình chụp điện thoại
-def preprocess_image(image):
-    # Bước 1: Chuyển sang xám (Grayscale)
+# 3. Kỹ thuật xử lý ảnh chụp bằng điện thoại (Binarization)
+def preprocess_for_easyocr(image):
+    # Chuyển ảnh màu sang xám
     img_gray = image.convert('L')
-    
-    # Bước 2: Tăng độ tương phản (Auto-contrast)
+    # Tự động tăng độ tương phản để chữ rõ hơn
     img_contrast = ImageOps.autocontrast(img_gray)
     
-    # Bước 3: Áp dụng phân ngưỡng để có ảnh trắng đen "cứng"
-    # Thuật toán này sẽ tìm mốc xám trung bình và ép mọi thứ tối hơn thành ĐEN, sáng hơn thành TRẮNG.
-    # Ngưỡng 140/255 là mức khởi đầu ổn cho đa số hình chụp điện thoại.
-    threshold = 140 
+    # Phân ngưỡng (Ép mọi thứ tối thành Đen, sáng thành Trắng)
+    # Ngưỡng 150 phù hợp với đa số ảnh chụp màn hình bằng điện thoại
+    threshold = 150
     fn = lambda x : 255 if x > threshold else 0
-    img_binarized = img_contrast.point(fn, mode='1')
+    img_binarized = img_contrast.point(fn, mode='L') # EasyOCR cần mode 'L' (Grayscale chuẩn)
     
-    return img_binarized
+    # Chuyển ảnh từ dạng PIL về mảng numpy để đưa vào EasyOCR
+    return np.array(img_binarized)
 
-# GIAO DIỆN CHÍNH
-st.markdown("### Bước 1: Tải file dữ liệu (.xlsx)")
+# ================= GIAO DIỆN CHÍNH =================
+st.markdown("### Bước 1: Tải ngân hàng câu hỏi")
 excel_file = st.file_uploader("Chọn file Excel (cau hoi.xlsx)", type=["xlsx"])
 
 if excel_file:
     df = load_data(excel_file)
-    st.success(f"✅ Đã nạp thành công {len(df)} câu hỏi.")
+    st.success(f"✅ Đã nạp thành công {len(df)} câu hỏi!")
     
-    st.markdown("### Bước 2: Tải ảnh câu hỏi")
-    image_file = st.file_uploader("Chọn ảnh cần quét", type=["png", "jpg", "jpeg"])
+    st.markdown("### Bước 2: Tải ảnh chụp câu hỏi")
+    image_file = st.file_uploader("Upload ảnh (nhớ cắt/crop sát vùng chữ)", type=["png", "jpg", "jpeg"])
     
     if image_file:
         image = Image.open(image_file)
-        st.image(image, caption="Ảnh của bạn", width=300)
+        st.image(image, caption="Ảnh bạn vừa tải lên", width=350)
         
-       with st.spinner("Đang quét chữ..."):
-            try:
-                processed_img = preprocess_image(image)
-                # Dùng Tesseract quét tiếng Việt
-                scanned_text = pytesseract.image_to_string(processed_img, lang='vie') 
-            except Exception as e:
-                st.error(f"Lỗi chi tiết từ Tesseract: {e}") # In ra lỗi thật để bắt bệnh
-                st.info("Gợi ý: Nếu lỗi là 'TesseractNotFoundError', hãy làm lại Bước 2 (Reboot app). Nếu lỗi là 'failed to load language vie', tức là dòng thứ 2 trong file packages.txt chưa được cài đặt đúng.")
-                st.stop()
+        with st.spinner("⏳ Đang phân tích hình ảnh và trích xuất chữ..."):
+            # Chạy hàm xử lý ảnh bóng lóa/mờ
+            processed_img_np = preprocess_for_easyocr(image)
+            
+            # Quét chữ bằng EasyOCR
+            results = reader.readtext(processed_img_np, detail=0)
+            scanned_text = " ".join(results)
 
-        with st.expander("Nội dung quét được (Bấm để xem)"):
+        # Hiển thị chữ để bạn kiểm tra thuật toán đọc đúng không
+        with st.expander("👀 Xem nội dung chữ đã nhận diện"):
             st.write(scanned_text)
 
-        # 3. THUẬT TOÁN TÌM KIẾM ĐÁP ÁN (Ngưỡng >= 80%)
+        # 4. THUẬT TOÁN TÌM KIẾM (Chỉ hiện kết quả khi tỷ lệ khớp >= 75%)
         if scanned_text.strip():
-            st.markdown("### 🎯 KẾT QUẢ:")
+            st.markdown("### 🎯 KẾT QUẢ TRA CỨU:")
             
+            # Xử lý gộp 5 cột Excel thành 1 chuỗi dài để tìm cho chuẩn
             df_str = df.fillna("").astype(str)
-            # Gộp Câu hỏi và 4 đáp án lại thành 1 chuỗi để tăng tỷ lệ so khớp trúng
             df_str['Tim_Kiem'] = df_str['Cau hoi'] + " " + df_str['A'] + " " + df_str['B'] + " " + df_str['C'] + " " + df_str['D']
             danh_sach_cau_hoi = df_str['Tim_Kiem'].tolist()
             
+            # Tìm 3 câu giống nhất bằng RapidFuzz
             ket_qua_tim_kiem = process.extract(
                 scanned_text, 
                 danh_sach_cau_hoi, 
@@ -76,29 +82,31 @@ if excel_file:
                 limit=3
             )
             
-            ket_qua_chinh_xac = [kq for kq in ket_qua_tim_kiem if kq[1] >= 80]
+            # Chỉ lấy các câu có độ khớp từ 75% trở lên
+            ket_qua_chinh_xac = [kq for kq in ket_qua_tim_kiem if kq[1] >= 75]
             
             if not ket_qua_chinh_xac:
-                st.warning("⚠️ Không tìm thấy đáp án (Độ khớp < 80%). Bạn hãy chụp sát và rõ chữ hơn nhé.")
+                st.error("❌ Không có câu nào khớp trên 75%. Thử crop ảnh sát vào chữ và chụp lại nhé!")
             else:
                 for text_match, score, index in ket_qua_chinh_xac:
                     hang = df.iloc[index]
                     
                     st.markdown("---")
-                    # In ra câu hỏi
+                    st.markdown(f"*(Tỷ lệ khớp: {score:.1f}%)*")
+                    
+                    # In CÂU HỎI
                     st.markdown(f"**❓ {hang.get('Cau hoi', '')}**")
                     
-                    # In ra 4 đáp án
-                    if pd.notna(hang.get('A')) and str(hang.get('A')).strip(): st.write(f"**A.** {hang['A']}")
-                    if pd.notna(hang.get('B')) and str(hang.get('B')).strip(): st.write(f"**B.** {hang['B']}")
-                    if pd.notna(hang.get('C')) and str(hang.get('C')).strip(): st.write(f"**C.** {hang['C']}")
-                    if pd.notna(hang.get('D')) and str(hang.get('D')).strip(): st.write(f"**D.** {hang['D']}")
+                    # In 4 ĐÁP ÁN (A, B, C, D)
+                    for phuong_an in ['A', 'B', 'C', 'D']:
+                        if pd.notna(hang.get(phuong_an)) and str(hang.get(phuong_an)).strip():
+                            st.write(f"**{phuong_an}.** {hang[phuong_an]}")
                     
-                    # Trích xuất và in ra đáp án đúng
+                    # In ĐÁP ÁN ĐÚNG (Bôi xanh nổi bật)
                     dap_an_dung = str(hang.get('Dap an dung', '')).strip().upper()
                     
                     if dap_an_dung in ['A', 'B', 'C', 'D']:
                         noi_dung_dap_an = str(hang[dap_an_dung]).strip()
-                        st.success(f"**💡 ĐÁP ÁN ĐÚNG: {dap_an_dung}** - {noi_dung_dap_an}")
+                        st.success(f"**💡 ĐÁP ÁN: {dap_an_dung}** - {noi_dung_dap_an}")
                     else:
-                        st.success(f"**💡 ĐÁP ÁN ĐÚNG:** {dap_an_dung}")
+                        st.success(f"**💡 ĐÁP ÁN:** {dap_an_dung}")
