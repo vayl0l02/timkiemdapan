@@ -22,20 +22,22 @@ reader = load_ocr()
 def load_data(file):
     return pd.read_excel(file)
 
-# 3. Kỹ thuật xử lý ảnh chụp bằng điện thoại (Binarization)
+# 3. Kỹ thuật xử lý ảnh chụp bằng điện thoại (Binarization & Resize)
 def preprocess_for_easyocr(image):
+    # BƯỚC QUAN TRỌNG NHẤT: Thu nhỏ ảnh để chống sập Server
+    # Ảnh dù có to mấy cũng sẽ bị bóp về kích thước an toàn, không quá 1024px
+    image.thumbnail((1024, 1024))
+    
     # Chuyển ảnh màu sang xám
     img_gray = image.convert('L')
     # Tự động tăng độ tương phản để chữ rõ hơn
     img_contrast = ImageOps.autocontrast(img_gray)
     
     # Phân ngưỡng (Ép mọi thứ tối thành Đen, sáng thành Trắng)
-    # Ngưỡng 150 phù hợp với đa số ảnh chụp màn hình bằng điện thoại
     threshold = 150
     fn = lambda x : 255 if x > threshold else 0
-    img_binarized = img_contrast.point(fn, mode='L') # EasyOCR cần mode 'L' (Grayscale chuẩn)
+    img_binarized = img_contrast.point(fn, mode='L') 
     
-    # Chuyển ảnh từ dạng PIL về mảng numpy để đưa vào EasyOCR
     return np.array(img_binarized)
 
 # ================= GIAO DIỆN CHÍNH =================
