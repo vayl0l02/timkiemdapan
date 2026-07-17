@@ -14,10 +14,25 @@ st.title("🔍 Trợ Lý Tìm Đáp Án Qua Ảnh")
 def load_data(file):
     return pd.read_excel(file)
 
-# 2. Xử lý ảnh trước khi quét 
+# 2. Xử lý ảnh nâng cấp: CHUYỂN ẢNH THÀNH TRẮNG ĐEN TUYỆT ĐỐI (Binarization)
+# Giúp loại bỏ bóng đổ, vân nhiễu từ hình chụp điện thoại
 def preprocess_image(image):
-    return image.convert('L') # Chuyển sang trắng đen giúp Tesseract đọc tốt hơn
+    # Bước 1: Chuyển sang xám (Grayscale)
+    img_gray = image.convert('L')
+    
+    # Bước 2: Tăng độ tương phản (Auto-contrast)
+    img_contrast = ImageOps.autocontrast(img_gray)
+    
+    # Bước 3: Áp dụng phân ngưỡng để có ảnh trắng đen "cứng"
+    # Thuật toán này sẽ tìm mốc xám trung bình và ép mọi thứ tối hơn thành ĐEN, sáng hơn thành TRẮNG.
+    # Ngưỡng 140/255 là mức khởi đầu ổn cho đa số hình chụp điện thoại.
+    threshold = 140 
+    fn = lambda x : 255 if x > threshold else 0
+    img_binarized = img_contrast.point(fn, mode='1')
+    
+    return img_binarized
 
+# GIAO DIỆN CHÍNH
 st.markdown("### Bước 1: Tải file dữ liệu (.xlsx)")
 excel_file = st.file_uploader("Chọn file Excel (cau hoi.xlsx)", type=["xlsx"])
 
