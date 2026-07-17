@@ -83,20 +83,50 @@ if df_questions is not None:
         st.text_area("Nội dung chữ quét được từ ảnh:", scanned_text, height=100)
         
         # Thuật toán tìm kiếm thông minh trong Excel (bạn có thể thay bằng fuzzy matching)
+        # Thuật toán tìm kiếm thông minh trong Excel
         if scanned_text.strip():
-            st.subheader("🎯 Kết quả tìm kiếm phù hợp nhất:")
+            st.subheader("🎯 Kết quả tra cứu:")
             
-            # Demo tìm kiếm đơn giản (kiểm tra từ khóa xuất hiện trong cột Câu hỏi)
-            # Giả sử cột đầu tiên trong file excel là "Câu hỏi", cột thứ 2 là "Đáp án"
-            col_question = df_questions.columns[0]
-            col_answer = df_questions.columns[1]
+            # Cải tiến: Trích xuất các từ khóa dài từ ảnh để tăng độ chính xác khi tìm kiếm
+            # Bỏ qua các từ quá ngắn (như "a", "an", "là", "thì"...)
+            keywords = [word.lower() for word in scanned_text.split() if len(word) > 2]
             
-            # Tìm kiếm chứa từ khóa
-            match_df = df_questions[df_questions[col_question].astype(str).apply(
-                lambda x: any(word.lower() in x.lower() for word in scanned_text.split() if len(word) > 2)
-            )]
-            
-            if not match_df.empty:
-                st.dataframe(match_df[[col_question, col_answer]].head(5))
+            if not keywords:
+                st.warning("Ảnh quá mờ hoặc chứa quá ít chữ để nhận diện. Vui lòng thử lại!")
             else:
-                st.warning("Không tìm thấy đáp án nào khớp hoàn toàn. Hãy thử chụp ảnh rõ nét hơn.")
+                # Tìm kiếm trên tất cả các cột của file Excel
+                # Lọc ra những hàng có chứa ít nhất 1 từ khóa
+                mask = pd.Series(False, index=df_questions.index)
+                for col in df_questions.columns:
+                    mask |= df_questions[col].astype(str).str.lower().apply(
+                        lambda x: any(kw in x for kw in keywords)
+                    )
+                
+                match_df = df_questions[mask]
+                
+                if not match_df.empty:
+                    # Hiển thị số lượng kết quả tìm được
+                    st.success(f"🔍 Tìm thấy {len(match_df)} kết quả phù hợp!")
+                    
+                    # Cải tiến giao diện hiển thị: In rõ câu hỏi và đáp án
+                    for index, row in match_df.head(5).iterrows(): # Hiển thị tối đa 5 kết quả tốt nhất
+                        st.markdown("---")
+                        
+                        # Giả định: 
+                        # - Nếu file có 2 cột: Cột 1 là câu hỏi, cột 2 là đáp án
+                        # - Nếu file có >2 cột: In ra toàn bộ thông tin của dòng đó
+                        if len(df_questions.columns) >= 2:
+                            col_q = df_questions.columns[0]
+                            col_a = df_questions.columns[1]
+                            
+                            st.markdown(f"**Câu hỏi:** {row[col_q]}")
+                            st.info(f"👉 **Đáp án:** {row[col_a]}")
+                            
+                            # Nếu có thêm các cột khác (ví dụ giải thích, môn học...), hiển thị thêm
+                            for extra_col in df_questions.columns[2:]:
+                                st.write(f"*{extra_col}:* {row[extra_col]}")
+                        else:
+                             # Phòng trường hợp file Excel chỉ có 1 cột
+                             st.markdown(f"**Nội dung tìm thấy:** {row[df_questions.columns[0]]}")
+                else:
+                    st.error("❌ Không tìm thấy đáp án nào khớp với ảnh trong file Excel. Vui lòng kiểm tra lại ngân hàng câu hỏi!")
