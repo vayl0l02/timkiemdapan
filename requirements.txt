@@ -1,6 +1,5 @@
 streamlit
 pandas
 openpyxl
-easyocr
+pytesseract
 pillow
-opencv-python-headless
