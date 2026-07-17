@@ -94,12 +94,13 @@ if df_questions is not None:
             if not keywords:
                 st.warning("Ảnh quá mờ hoặc chứa quá ít chữ để nhận diện. Vui lòng thử lại!")
             else:
-                # Tìm kiếm trên tất cả các cột của file Excel
+               # Tìm kiếm trên tất cả các cột của file Excel
                 # Lọc ra những hàng có chứa ít nhất 1 từ khóa
                 mask = pd.Series(False, index=df_questions.index)
                 for col in df_questions.columns:
-                    mask |= df_questions[col].astype(str).str.lower().apply(
-                        lambda x: any(kw in x for kw in keywords)
+                    # Đã thêm .fillna("") để xử lý triệt để các ô trống trong Excel
+                    mask |= df_questions[col].fillna("").astype(str).str.lower().apply(
+                        lambda x: any(kw in str(x) for kw in keywords)
                     )
                 
                 match_df = df_questions[mask]
