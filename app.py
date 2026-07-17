@@ -48,35 +48,48 @@ if excel_file:
     df = load_data(excel_file)
     st.success(f"✅ Đã nạp thành công {len(df)} câu hỏi!")
     
-    st.markdown("### Bước 2: Tải ảnh chụp câu hỏi")
-    image_file = st.file_uploader("Upload ảnh (nhớ cắt/crop sát vùng chữ)", type=["png", "jpg", "jpeg"])
+    st.markdown("### Bước 2: Tải ảnh, Dán ảnh hoặc Chụp trực tiếp")
     
-    if image_file:
-        image = Image.open(image_file)
-        st.image(image, caption="Ảnh bạn vừa tải lên", width=350)
+    # Chia giao diện làm 2 Tab gọn gàng
+    tab1, tab2 = st.tabs(["📁 Tải / Dán ảnh (Ctrl+V)", "📸 Chụp Camera trực tiếp"])
+    
+    image = None # Biến lưu trữ ảnh cuối cùng được chọn
+    
+    with tab1:
+        st.info("💡 Mẹo trên PC: Click chuột vào khung bên dưới và nhấn **Ctrl + V** để dán ảnh trực tiếp!")
+        image_file = st.file_uploader("Upload hoặc dán ảnh", type=["png", "jpg", "jpeg"])
+        if image_file:
+            image = Image.open(image_file)
+            
+    with tab2:
+        st.warning("📱 Cắt (Crop) sát vào chữ trước khi bấm nút OK nhé!")
+        camera_file = st.camera_input("Bật máy ảnh")
+        if camera_file:
+            image = Image.open(camera_file)
+    
+    # KHI CÓ ẢNH (Từ tải lên, dán vào hoặc chụp) THÌ BẮT ĐẦU QUÉT
+    if image is not None:
+        st.image(image, caption="Ảnh đang được xử lý...", width=350)
         
         with st.spinner("⏳ Đang phân tích hình ảnh và trích xuất chữ..."):
-            # Chạy hàm xử lý ảnh bóng lóa/mờ
+            # Hàm bóp dung lượng và khử bóng lóa
             processed_img_np = preprocess_for_easyocr(image)
             
             # Quét chữ bằng EasyOCR
             results = reader.readtext(processed_img_np, detail=0)
             scanned_text = " ".join(results)
 
-        # Hiển thị chữ để bạn kiểm tra thuật toán đọc đúng không
         with st.expander("👀 Xem nội dung chữ đã nhận diện"):
             st.write(scanned_text)
 
-        # 4. THUẬT TOÁN TÌM KIẾM (Chỉ hiện kết quả khi tỷ lệ khớp >= 75%)
+        # 4. THUẬT TOÁN TÌM KIẾM ĐÁP ÁN (Ngưỡng >= 75%)
         if scanned_text.strip():
             st.markdown("### 🎯 KẾT QUẢ TRA CỨU:")
             
-            # Xử lý gộp 5 cột Excel thành 1 chuỗi dài để tìm cho chuẩn
             df_str = df.fillna("").astype(str)
             df_str['Tim_Kiem'] = df_str['Cau hoi'] + " " + df_str['A'] + " " + df_str['B'] + " " + df_str['C'] + " " + df_str['D']
             danh_sach_cau_hoi = df_str['Tim_Kiem'].tolist()
             
-            # Tìm 3 câu giống nhất bằng RapidFuzz
             ket_qua_tim_kiem = process.extract(
                 scanned_text, 
                 danh_sach_cau_hoi, 
@@ -84,7 +97,6 @@ if excel_file:
                 limit=3
             )
             
-            # Chỉ lấy các câu có độ khớp từ 75% trở lên
             ket_qua_chinh_xac = [kq for kq in ket_qua_tim_kiem if kq[1] >= 75]
             
             if not ket_qua_chinh_xac:
@@ -96,15 +108,12 @@ if excel_file:
                     st.markdown("---")
                     st.markdown(f"*(Tỷ lệ khớp: {score:.1f}%)*")
                     
-                    # In CÂU HỎI
                     st.markdown(f"**❓ {hang.get('Cau hoi', '')}**")
                     
-                    # In 4 ĐÁP ÁN (A, B, C, D)
                     for phuong_an in ['A', 'B', 'C', 'D']:
                         if pd.notna(hang.get(phuong_an)) and str(hang.get(phuong_an)).strip():
                             st.write(f"**{phuong_an}.** {hang[phuong_an]}")
                     
-                    # In ĐÁP ÁN ĐÚNG (Bôi xanh nổi bật)
                     dap_an_dung = str(hang.get('Dap an dung', '')).strip().upper()
                     
                     if dap_an_dung in ['A', 'B', 'C', 'D']:
